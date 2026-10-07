@@ -68,3 +68,22 @@ Core entities:
 - Authentication uses seeded demo users via request headers. This keeps the first version focused on authorization, tenant isolation, and workflow boundaries. A production auth provider is a backlog feature.
 - The worker logs notifications instead of integrating with a real email provider. The outbox boundary is still present, so the future integration point is realistic.
 - Search uses database filtering. Full-text indexing is deferred until the product has enough search behavior to justify the added operational complexity.
+
+## Plan versus code (checked against this snapshot)
+
+| Plan | In the code |
+|---|---|
+| Express API, React + Vite, Prisma + PostgreSQL, worker, Vitest, Docker Compose, GitHub Actions | All present. Compose also starts Redis, which nothing uses. |
+| `packages/domain`, `packages/shared` | Present as source folders imported through TypeScript path aliases, not as separate npm packages. |
+| Entities: Tenant, User, Company, Customer, Ticket, TicketComment, EmailMessage, AuditLog, OutboxEvent | Exactly these nine models (`prisma/schema.prisma`). |
+| Workflow 1-7 | All seven exist as routes: list and filter tickets, customer and company lists, ticket update, comments, public-reply events, inbound email, audit logs (managers and admins only). |
+| "Backend authorization is the source of truth" | Partly: tenant scoping is consistent, but role checks exist only for status transitions, assignment, internal notes and the audit log. Viewers can create tickets, change priority and tags, and send public replies. |
+| "Tenant isolation is applied in every query" | Yes for reads and the lookups before writes. Updates then use `where: { id }` after a tenant-scoped lookup (`apps/api/src/modules/tickets/ticketService.ts:144-149`, `:168-169`), which is safe as long as the lookup stays. |
+| "Route handlers validate input before calling services" | Yes for tickets, comments and inbound email (Zod). The customer search string is not validated beyond its type. |
+| "Transactions create the primary change, audit log, and outbox event together" | Yes for ticket create, update and comment. Inbound email upserts the customer outside the transaction and writes no audit log. |
+
+## Exercise
+
+**Goal:** turn "Backend authorization is the source of truth" into a table: for each route, which roles may call it today and which should.
+
+**Check:** your table has at least these differences to fix: viewers can `POST /api/tickets`, `PATCH /api/tickets/:id` (priority, tags), `POST /api/tickets/:id/comments` with `PUBLIC`, and `POST /api/notifications/inbound-email`; and every role can `GET /api/admin/users`.

@@ -83,3 +83,33 @@ Senior concept: isolating API calls keeps components focused on workflow and ren
 These tests protect the highest-value pure rules: transitions, SLA state, and authorization helpers.
 
 Senior concept: start tests where bugs are expensive and setup is cheap. Domain tests are fast, stable, and clarify expected behavior.
+
+
+## Line references and review notes (2026-10 docs pass)
+
+Line numbers refer to this snapshot. Nothing was run.
+
+- **`prisma/schema.prisma`** — enums at the top (`Role`, `TicketStatus`, `TicketPriority`, `CommentVisibility`, `OutboxStatus`, lines 10-42); `Ticket` (`:103-130`) with unique `(tenantId, number)` and a GIN index on `tags`; `EmailMessage` unique on `(tenantId, externalId)` (`:160`). Review note: the order of `TicketPriority` values decides how `orderBy: { priority: "desc" }` sorts.
+- **`packages/domain/src/index.ts`** — transitions (`:24-43`): unchanged status is always allowed, viewers can change nothing, agents may close only from `RESOLVED` or `PENDING`. SLA (`:45-68`). Helpers (`:70-80`): `canViewInternalNote` and `canManageUsers` are unused. Review note: `assertTicketTransition` throws a plain `Error`, which becomes a 500.
+- **`packages/shared/src/index.ts`** — four Zod schemas and their inferred types (`:5-41`).
+- **`apps/api/src/middleware/auth.ts`** — default headers (`:20-21`) make an anonymous request the agent; `requireRole` (`:43-57`) is used on one route.
+- **`apps/api/src/modules/tickets/ticketService.ts`** — `listTickets` (`:37-71`), `getTicket` (`:73-88`), `createTicket` (`:90-141`), `updateTicket` (`:143-205`), `addTicketComment` (`:207-257`). Review notes: write responses use `ticketInclude` with all comments (`:13-20`); ticket numbers are max + 1 (`:100-110`).
+- **`apps/api/src/modules/notifications/notificationRoutes.ts`** — inbound email (`:16-79`); the customer upsert is outside the transaction and there is no audit log.
+- **`apps/worker/src/worker.ts`** — batch (`:6-34`), loop (`:36-44`); one thrown pass ends the loop.
+- **`apps/web/src/App.tsx`** — `refresh` (`:58-78`), `selectTicket` (`:84-86`), `updateSelectedTicket` (`:88-93`), `submitComment` (`:95-101`), `submitTicket` (`:103-116`), `loadAudit` (`:118-126`), `simulateInboundEmail` (`:128-138`). Review note: only `refresh` and `loadAudit` catch errors.
+- **`apps/web/src/lib/api.ts`** — one `request` helper sends `/api…` with the two demo headers and throws the server's `error` message on failure.
+- **`tests/domain/ticket-rules.test.ts`** — seven tests: agent close from `RESOLVED`, viewer blocked, invalid transition throws, urgent SLA is two hours, at-risk, pending pauses, operational roles can assign.
+
+## Exercises
+
+Each has a **Goal** and a **Check** you can observe.
+
+1. **Follow a public reply.**
+   *Goal:* as the agent, post a `PUBLIC` comment on a ticket with no earlier public reply, then look at the database.
+   *Check:* the ticket now has `firstResponseAt`, there is a `ticket.public_reply_added` audit row and a `notification.customer_reply` outbox event, and within a few seconds the worker marks that event `PROCESSED`.
+2. **Switch to the viewer in the UI.**
+   *Goal:* choose `viewer@acme.test` in the user switcher and open a ticket that has an internal note.
+   *Check:* the note is hidden; now change the ticket's priority in the UI and check the network response of the `PATCH` request — the internal note is in it (finding 1 in `docs/architecture/final-system-design.md`).
+3. **Test the boundary you just found.**
+   *Goal:* write a domain or API test that captures "viewers never receive internal comments from any ticket endpoint".
+   *Check:* the test fails on the current code and passes after the fix.
